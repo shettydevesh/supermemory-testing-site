@@ -11,9 +11,9 @@ config = dotenv_values(".env")
 @st.cache_resource
 def initialize_clients():
     supermemory_client = Supermemory(
-        api_key=config["SUPERMEMORY_API_KEY"],
+        api_key=st.secrets["SUPERMEMORY_API_KEY"],
     )
-    anthropic_client = Anthropic(api_key=config["ANTHROPIC_API_KEY"])
+    anthropic_client = Anthropic(api_key=st.secrets["ANTHROPIC_API_KEY"])
     return supermemory_client, anthropic_client
 
 supermemory, anthropic = initialize_clients()
