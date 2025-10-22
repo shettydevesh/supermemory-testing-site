@@ -3,6 +3,7 @@ from supermemory import Supermemory
 from anthropic import Anthropic
 from typing import List
 from dotenv import dotenv_values
+from general_question_analyzer import get_analyzer
 
 # Load environment variables
 config = dotenv_values(".env")
@@ -12,8 +13,10 @@ config = dotenv_values(".env")
 def initialize_clients():
     supermemory_client = Supermemory(
         api_key=st.secrets["SUPERMEMORY_API_KEY"],
+        # api_key=config['SUPERMEMORY_API_KEY']
     )
     anthropic_client = Anthropic(api_key=st.secrets["ANTHROPIC_API_KEY"])
+    # anthropic_client = Anthropic(api_key=config["ANTHROPIC_API_KEY"])
     return supermemory_client, anthropic_client
 
 supermemory, anthropic = initialize_clients()
@@ -555,38 +558,57 @@ if prompt := st.chat_input("Type your question here..."):
     with st.chat_message("user", avatar="👤"):
         st.markdown(prompt)
 
-    # Search Supermemory
-    with st.spinner("🔍 Searching knowledge base..."):
-        context_chunks, found = search_supermemory(prompt, limit=context_limit)
+    # ANALYZER: Check if this is a general question (early exit optimization)
+    analyzer = get_analyzer()
+    is_general, quick_response = analyzer.analyze(prompt)
 
-    # Display assistant message with streaming
-    with st.chat_message("assistant", avatar="🤖"):
-        message_placeholder = st.empty()
-        full_response = ""
+    if is_general:
+        # Quick response path - skip expensive Supermemory search
+        with st.chat_message("assistant", avatar="🤖"):
+            message_placeholder = st.empty()
+            # Simulate streaming for consistency (but it's instant)
+            message_placeholder.markdown(quick_response)
 
-        # Stream the response
-        for chunk in generate_response_stream(prompt, context_chunks):
-            full_response += chunk
-            message_placeholder.markdown(full_response + "▌")
+        # Add assistant response to chat history (no context for general questions)
+        st.session_state.messages.append({
+            "role": "assistant",
+            "content": quick_response,
+            "context": []
+        })
+    else:
+        # Normal path - search Supermemory for knowledge-based queries
+        # Search Supermemory
+        with st.spinner("🔍 Searching knowledge base..."):
+            context_chunks, found = search_supermemory(prompt, limit=context_limit)
 
-        # Final message without cursor
-        message_placeholder.markdown(full_response)
+        # Display assistant message with streaming
+        with st.chat_message("assistant", avatar="🤖"):
+            message_placeholder = st.empty()
+            full_response = ""
 
-        # Show context if enabled
-        if show_context and context_chunks:
-            with st.expander("📚 View Retrieved Context", expanded=False):
-                for i, ctx in enumerate(context_chunks, 1):
-                    st.markdown(f"**Context {i}:**")
-                    st.text(ctx)
-                    if i < len(context_chunks):
-                        st.divider()
+            # Stream the response
+            for chunk in generate_response_stream(prompt, context_chunks):
+                full_response += chunk
+                message_placeholder.markdown(full_response + "▌")
 
-    # Add assistant response to chat history
-    st.session_state.messages.append({
-        "role": "assistant",
-        "content": full_response,
-        "context": context_chunks
-    })
+            # Final message without cursor
+            message_placeholder.markdown(full_response)
+
+            # Show context if enabled
+            if show_context and context_chunks:
+                with st.expander("📚 View Retrieved Context", expanded=False):
+                    for i, ctx in enumerate(context_chunks, 1):
+                        st.markdown(f"**Context {i}:**")
+                        st.text(ctx)
+                        if i < len(context_chunks):
+                            st.divider()
+
+        # Add assistant response to chat history
+        st.session_state.messages.append({
+            "role": "assistant",
+            "content": full_response,
+            "context": context_chunks
+        })
 
 # Footer
 st.divider()
