@@ -4,6 +4,14 @@ from anthropic import Anthropic
 from typing import List
 from dotenv import dotenv_values
 from general_question_analyzer import get_analyzer
+from reportlab.lib.pagesizes import letter
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import inch
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak
+from reportlab.lib.enums import TA_LEFT#type: ignore
+from reportlab.lib.colors import HexColor
+from io import BytesIO
+from datetime import datetime
 
 # Load environment variables
 config = dotenv_values(".env")
@@ -46,6 +54,45 @@ SYSTEM_PROMPT = """You are an intelligent assistant with access to a knowledge b
 
 ## Output Format:
 - Prettify the output using Markdown
+
+## Guardrails:
+# Role & Objective
+
+You are an AI brand custodian of Britannia Croissant.
+
+## Guidelines you must follow always. Your goal is to always have your output follow these benchmarks:
+
+### Basic benchmarks
+
+1. **Content Resonance:** Identify high-performing content based on past engagement metrics, user behavior, and audience interactions.
+
+2. **Industry Performance:** Monitor trends and successful campaigns within the food and snacking industry to identify best practices.
+
+3. **Virality Optimization:** Suggest innovative and creative content strategies to maximize reach, shares, and engagement.
+
+4. **Performance Benchmarking:** Analyze top-performing posts and media content to identify clear patterns in engagement, format, and messaging.
+
+### Brand Context & Alignment
+- All responses must align with the **"Brand Context" document** plus **"Brand Manager Brain" document** and follow the **Always On Rule** to maintain consistency in brand communication.
+
+### Competitive Benchmarking
+- Analyze **competitor brands** such as **Bauli, Dark Fantasy, and KitKat** to identify effective strategies and areas for differentiation.
+
+### Performance Analysis
+- Break down **top-performing posts and media content** to extract **patterns in format, messaging, visuals, and audience response**.
+
+### Priority order of information during analysis
+
+When referencing insights, prioritize sources in the following order:
+1. **Meta Metrics** (highest priority)
+2. **Rejected Ideas** (medium priority)
+3. **Ineffective Ideas** (low priority)
+4. **Approved Ideas** (lowest priority)
+
+## Your workflow:
+- Break down user's expectation and output an optimized prompt that solves the user's query.
+- Ask questions to user to clarify the request.
+- Output the result.
 
 Your goal is to be a reliable knowledge assistant that helps users find and understand information from their knowledge base."""
 
@@ -105,6 +152,124 @@ Please acknowledge that you don't have specific information about this in the kn
                 yield text
     except Exception as e:
         yield f"Error generating response: {e}"
+
+def export_chat_to_pdf(messages: List[dict]) -> BytesIO:
+    """
+    Export chat history to a PDF file
+    Returns a BytesIO buffer containing the PDF
+    """
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=letter,
+                           rightMargin=0.75*inch, leftMargin=0.75*inch,
+                           topMargin=1*inch, bottomMargin=0.75*inch)
+
+    # Container for PDF elements
+    story = []
+
+    # Define custom styles
+    styles = getSampleStyleSheet()
+
+    # Title style
+    title_style = ParagraphStyle(
+        'CustomTitle',
+        parent=styles['Heading1'],
+        fontSize=24,
+        textColor=HexColor('#667eea'),
+        spaceAfter=30,
+        alignment=TA_LEFT,
+        fontName='Helvetica-Bold'
+    )
+
+    # User message style
+    user_style = ParagraphStyle(
+        'UserMessage',
+        parent=styles['Normal'],
+        fontSize=11,
+        textColor=HexColor('#1a1a1a'),
+        spaceAfter=6,
+        spaceBefore=12,
+        leftIndent=20,
+        rightIndent=0,
+        alignment=TA_LEFT,
+        fontName='Helvetica-Bold',
+        backColor=HexColor('#e8ebfa')
+    )
+
+    # Assistant message style
+    assistant_style = ParagraphStyle(
+        'AssistantMessage',
+        parent=styles['Normal'],
+        fontSize=11,
+        textColor=HexColor('#1a1a1a'),
+        spaceAfter=6,
+        spaceBefore=12,
+        leftIndent=20,
+        rightIndent=0,
+        alignment=TA_LEFT,
+        fontName='Helvetica'
+    )
+
+    # Label style
+    label_style = ParagraphStyle(
+        'Label',
+        parent=styles['Normal'],
+        fontSize=10,
+        textColor=HexColor('#667eea'),
+        spaceAfter=4,
+        fontName='Helvetica-Bold'
+    )
+
+    # Add title
+    title = Paragraph("Knowledge Base Chat History", title_style)
+    story.append(title)
+
+    # Add export date
+    export_date = Paragraph(
+        f"Exported on: {datetime.now().strftime('%B %d, %Y at %I:%M %p')}",
+        styles['Normal']
+    )
+    story.append(export_date)
+    story.append(Spacer(1, 0.3*inch))
+
+    # Add messages
+    for i, message in enumerate(messages):
+        role = message.get("role", "unknown")
+        content = message.get("content", "")
+
+        # Clean content for PDF (remove markdown formatting for simplicity)
+        # Basic markdown cleanup - you can enhance this
+        clean_content = content.replace("**", "").replace("*", "").replace("#", "")
+
+        if role == "user":
+            label = Paragraph("👤 You:", label_style)
+            story.append(label)
+            msg = Paragraph(clean_content, user_style)
+            story.append(msg)
+        elif role == "assistant":
+            label = Paragraph("🤖 Assistant:", label_style)
+            story.append(label)
+            msg = Paragraph(clean_content, assistant_style)
+            story.append(msg)
+
+        # Add spacing between messages
+        story.append(Spacer(1, 0.2*inch))
+
+        # Page break every 10 messages to avoid overcrowding
+        if (i + 1) % 10 == 0 and i < len(messages) - 1:
+            story.append(PageBreak())
+
+    # Add footer
+    story.append(Spacer(1, 0.5*inch))
+    footer = Paragraph(
+        "✨ Powered by Supermemory & Claude 3.5 Haiku",
+        styles['Normal']
+    )
+    story.append(footer)
+
+    # Build PDF
+    doc.build(story)
+    buffer.seek(0)
+    return buffer
 
 # Streamlit UI Configuration
 st.set_page_config(
@@ -496,6 +661,18 @@ with st.sidebar:
     """)
 
     st.divider()
+
+    # Download chat as PDF button
+    if len(st.session_state.get("messages", [])) > 0:
+        pdf_buffer = export_chat_to_pdf(st.session_state.messages)
+        st.download_button(
+            label="📄 Download Chat as PDF",
+            data=pdf_buffer,
+            file_name=f"chat_history_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+            mime="application/pdf",
+            use_container_width=True,
+            help="Download the entire chat conversation as a PDF file"
+        )
 
     if st.button("🗑️ Clear Chat History", use_container_width=True):
         st.session_state.messages = []
